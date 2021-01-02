@@ -26,7 +26,7 @@ func (c *Chd) MarshalBinary(w io.Writer) (int, error) {
 	//   o resv [7]byte
 	//
 	// Body:
-	//   o <n> seeds laid out concurrently
+	//   o <n> seeds laid out sequentially
 
 	var x [_ChdHeaderSize]byte // 4 x 64-bit words
 
@@ -36,31 +36,20 @@ func (c *Chd) MarshalBinary(w io.Writer) (int, error) {
 		return 0, err
 	}
 
+	// Instead of writing one seed at a time, we re-interpret
+	// c.seeds as a byte-slice and write it out.
 	bs := u64sToByteSlice(c.seeds)
 	n, err := writeAll(w, bs)
 	if err != nil {
 		return nw, err
 	}
 
-	/*
-		// Now, write the seeds
-		var z [8]byte
-		le := binary.LittleEndian
-		for _, s := range c.seeds {
-			le.PutUint64(z[:], s)
-			w, err := writeAll(w, z[:])
-			if err != nil {
-				return err
-			}
-			nw += w
-		}
-	*/
-
 	return n + nw, nil
 }
 
-// UnmarshalCHD reads a previously marshalled Chd instance and returns
-// a lookup table.
+// UnmarshalBinaryMmap reads a previously marshalled Chd instance and returns
+// a lookup table. It assumes that buf is memory-mapped and aligned at the
+// right boundaries.
 func (c *Chd) UnmarshalBinaryMmap(buf []byte) error {
 	hdr := buf[:_ChdHeaderSize]
 	if hdr[0] != 1 {

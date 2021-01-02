@@ -8,10 +8,11 @@
 // License GPLv2
 
 // Package chd implements ChdBuilder - to create fast, minimal perfect hash functions from
-// a given set of keys. This implementation is based on: https://arxiv.org/abs/1702.03154.
+// a given set of keys. This is an implementation of CHD in
+// http://cmph.sourceforge.net/papers/esa09.pdf -
 //
-// Additionally, DBWriter enables creating a fast, constant DB for read-only workloads. It
-// serializes the key,value pairs and builds a CHD minimal perfect hash function over the
+// Additionally, DBWriter enables creating a fast, constant-time DB for read-only workloads.
+// It serializes the key,value pairs and builds a CHD minimal perfect hash function over the
 // given keys. The serialized DB can be read back via DBReader for constant time lookups
 // of the MPH DB.
 package chd
