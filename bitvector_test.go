@@ -57,5 +57,3 @@ func TestBitVectorMerge(t *testing.T) {
 	}
 
 }
-
-

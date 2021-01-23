@@ -321,14 +321,17 @@ func (w *DBWriter) addRecord(key uint64, val []byte) (bool, error) {
 		return false, err
 	}
 
+	// Don't write values if we don't need to
 	v := &value{
 		off:  w.off,
 		vlen: uint32(len(val)),
 	}
 	w.keymap[key] = v
 
-	if err := w.writeRecord(val, v.off); err != nil {
-		return false, err
+	if len(val) > 0 {
+		if err := w.writeRecord(val, v.off); err != nil {
+			return false, err
+		}
 	}
 
 	return true, nil

@@ -5,7 +5,7 @@ mphdb_srcs = $(wildcard example/*.go)
 all: mphdb
 
 mphdb: $(srcs) $(mphdb_srcs)
-	go build -o $@ ./example/mphdb.go
+	go build -o $@ ./example
 
 
 test: $(srcs)

@@ -48,9 +48,11 @@ func AddTextStream(w *chd.DBWriter, fd io.Reader, delim string) (uint64, error) 
 
 	// do I/O asynchronously
 	go func(sc *bufio.Scanner, ch chan *record) {
+		var empty string
+
 		for sc.Scan() {
 			s := strings.TrimSpace(sc.Text())
-			if len(s) == 0 {
+			if len(s) == 0 || s[0] == '#' {
 				continue
 			}
 
@@ -63,11 +65,11 @@ func AddTextStream(w *chd.DBWriter, fd io.Reader, delim string) (uint64, error) 
 				v = s[i:]
 			} else {
 				k = s
-				v = "1" // bool
+				v = empty
 			}
 
 			// ignore items that are too large
-			if len(k) > 65535 || len(v) >= 4294967295 {
+			if len(v) >= 4294967295 {
 				continue
 			}
 

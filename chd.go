@@ -102,6 +102,7 @@ func (c *ChdBuilder) Freeze(load float64) (*Chd, error) {
 	// sort buckets in decreasing order of occupancy-size
 	sort.Sort(buckets)
 
+	tries := 0
 	for i := range buckets {
 		b := &buckets[i]
 		for s := uint64(1); s < _MaxSeed; s++ {
@@ -118,6 +119,7 @@ func (c *ChdBuilder) Freeze(load float64) (*Chd, error) {
 			goto nextBucket
 
 		nextSeed:
+			tries++
 		}
 
 		return nil, fmt.Errorf("chd: No MPH after %d tries", _MaxSeed)
@@ -126,6 +128,7 @@ func (c *ChdBuilder) Freeze(load float64) (*Chd, error) {
 
 	chd := &Chd{
 		seeds: seeds,
+		tries: tries,
 	}
 	return chd, nil
 }
@@ -133,6 +136,7 @@ func (c *ChdBuilder) Freeze(load float64) (*Chd, error) {
 // Chd represents a frozen PHF for the given set of keys
 type Chd struct {
 	seeds []uint64
+	tries int
 }
 
 // Len returns the actual length of the PHF lookup table
@@ -182,4 +186,3 @@ func nextpow2(n uint64) uint64 {
 	n |= n >> 32
 	return n + 1
 }
-

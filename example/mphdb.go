@@ -22,6 +22,8 @@ import (
 	"os"
 	"strings"
 
+	"time"
+
 	"github.com/opencoff/go-chd"
 
 	flag "github.com/opencoff/pflag"
@@ -72,8 +74,9 @@ func main() {
 		die("can't create MPH DB: %s", err)
 	}
 
-	var n uint64
+	var tot uint64
 	if len(args) > 0 {
+		var n uint64
 		for _, f := range args {
 			switch {
 			case strings.HasSuffix(f, ".txt"):
@@ -93,8 +96,11 @@ func main() {
 			}
 
 			fmt.Printf("+ %s: %d records\n", f, n)
+			tot += n
 		}
 	} else {
+		var n uint64
+
 		n, err = AddTextStream(db, os.Stdin, " \t")
 		if err != nil {
 			db.Abort()
@@ -102,13 +108,18 @@ func main() {
 		}
 
 		fmt.Printf("+ <STDIN>: %d records\n", n)
+		tot += n
 	}
 
+	start := time.Now()
 	err = db.Freeze(load)
 	if err != nil {
 		db.Abort()
 		die("can't write db %s: %s", fn, err)
 	}
+	delta := time.Now().Sub(start)
+	speed := (1.0e6 * float64(tot)) / float64(delta.Microseconds())
+	fmt.Printf("%d keys, %s (%3.2f keys/sec)\n", tot, delta, speed)
 }
 
 // die with error

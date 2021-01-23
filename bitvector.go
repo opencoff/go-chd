@@ -13,7 +13,6 @@ package chd
 // bitVector represents a bit vector in an efficient manner
 type bitVector struct {
 	v []uint64
-
 }
 
 // newbitVector creates a bitvector to hold atleast 'size' bits.
@@ -41,10 +40,9 @@ func (b *bitVector) Words() uint64 {
 // Set sets the bit 'i' in the bitvector
 func (b *bitVector) Set(i uint64) *bitVector {
 	pv := &b.v[i/64]
-	*pv |=  uint64(1) << (i % 64)
+	*pv |= uint64(1) << (i % 64)
 	return b
 }
-
 
 // Clear clears bit 'i'
 func (b *bitVector) Clear(i uint64) *bitVector {
@@ -76,4 +74,3 @@ func (b *bitVector) Merge(x *bitVector) *bitVector {
 	}
 	return b
 }
-
