@@ -36,3 +36,14 @@ func rand32() uint32 {
 
 	return binary.BigEndian.Uint32(b[:])
 }
+
+func rand64() uint64 {
+	var b [8]byte
+
+	_, err := io.ReadFull(rand.Reader, b[:])
+	if err != nil {
+		panic("can't read crypto/rand")
+	}
+
+	return binary.BigEndian.Uint64(b[:])
+}

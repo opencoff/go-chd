@@ -42,9 +42,10 @@ func TestDB(t *testing.T) {
 		}
 	}()
 
+	hseed := rand64()
 	kvmap := make(map[uint64]string)
 	for _, s := range keyw {
-		h := fasthash.Hash64(0xdeadbeefbaadf00d, []byte(s))
+		h := fasthash.Hash64(hseed, []byte(s))
 		err = wr.Add(h, []byte(s))
 		assert(err == nil, "can't add key %x: %s", h, err)
 		kvmap[h] = s
@@ -65,7 +66,7 @@ func TestDB(t *testing.T) {
 
 	// now look for keys not in the DB
 	for i := 0; i < 10; i++ {
-		_, err := rd.Find(uint64(i))
-		assert(err == ErrNoKey, "whoa: Found incorrect key %d", i)
+		v, err := rd.Find(uint64(i))
+		assert(err != nil, "whoa: found key %d => %s", i, string(v))
 	}
 }

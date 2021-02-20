@@ -24,7 +24,7 @@ import (
 
 const (
 	// number of times we will try to build the table
-	_MaxSeed uint64 = 1000000
+	_MaxSeed uint32 = 1000000
 )
 
 // ChdBuilder is used to create a MPHF from a given set of uint64 keys
@@ -87,12 +87,16 @@ func (c *ChdBuilder) Freeze(load float64) (*Chd, error) {
 	m := uint64(float64(len(c.data)) / load)
 	m = nextpow2(m)
 	buckets := make(buckets, m)
-	seeds := make([]uint64, m)
+	seeds := make([]uint32, m)
+
+	for i := range buckets {
+		b := &buckets[i]
+		b.slot = uint64(i)
+	}
 
 	for key, _ := range c.data {
 		j := rhash(0, key, m)
 		b := &buckets[j]
-		b.slot = j // original slot assigned to this key
 		b.keys = append(b.keys, key)
 	}
 
@@ -105,7 +109,7 @@ func (c *ChdBuilder) Freeze(load float64) (*Chd, error) {
 	tries := 0
 	for i := range buckets {
 		b := &buckets[i]
-		for s := uint64(1); s < _MaxSeed; s++ {
+		for s := uint32(1); s < _MaxSeed; s++ {
 			bOcc.Reset()
 			for _, key := range b.keys {
 				h := rhash(s, key, m)
@@ -135,7 +139,7 @@ func (c *ChdBuilder) Freeze(load float64) (*Chd, error) {
 
 // Chd represents a frozen PHF for the given set of keys
 type Chd struct {
-	seeds []uint64
+	seeds []uint32
 	tries int
 }
 
@@ -166,13 +170,14 @@ func mix(h uint64) uint64 {
 // hash key with a given seed and return the result modulo 'sz'.
 // 'sz' is guarantted to be a power of 2; so, modulo can be fast.
 // borrowed from Zi Long Tan's superfast hash
-func rhash(seed uint64, key uint64, sz uint64) uint64 {
+func rhash(seed uint32, key uint64, sz uint64) uint64 {
 	const m uint64 = 0x880355f21e6d1965
-	var h uint64 = key + ^seed
+	var h uint64 = key
 
-	h ^= mix(h)
 	h *= m
-	return h & (sz - 1)
+	h ^= mix(uint64(seed))
+	h *= m
+	return mix(h) & (sz - 1)
 }
 
 // return next power of 2

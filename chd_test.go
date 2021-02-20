@@ -28,6 +28,16 @@ var keyw = []string{
 	"Tarahumari",
 	"endocrinotherapy",
 	"quicksandy",
+	"heretics",
+	"pediment",
+	"spleen's",
+	"Shepard's",
+	"paralyzed",
+	"megahertzes",
+	"Richardson's",
+	"mechanics's",
+	"Springfield",
+	"burlesques",
 }
 
 func TestCHDSimple(t *testing.T) {
@@ -38,8 +48,9 @@ func TestCHDSimple(t *testing.T) {
 	kvmap := make(map[uint64]string) // map of hash to string
 	kmap := make(map[uint64]uint64)  // map of index to hashval
 
+	hseed := rand64()
 	for _, s := range keyw {
-		h := fasthash.Hash64(0xdeadbeefbaadf00d, []byte(s))
+		h := fasthash.Hash64(hseed, []byte(s))
 		kvmap[h] = s
 		c.Add(h)
 	}
@@ -66,9 +77,10 @@ func TestCHDMarshal(t *testing.T) {
 	b, err := New()
 	assert(err == nil, "construction failed: %s", err)
 
+	hseed := rand64()
 	keys := make([]uint64, len(keyw))
 	for i, s := range keyw {
-		keys[i] = fasthash.Hash64(0xdeadbeefbaadf00d, []byte(s))
+		keys[i] = fasthash.Hash64(hseed, []byte(s))
 		b.Add(keys[i])
 	}
 

@@ -38,7 +38,7 @@ func (c *Chd) MarshalBinary(w io.Writer) (int, error) {
 
 	// Instead of writing one seed at a time, we re-interpret
 	// c.seeds as a byte-slice and write it out.
-	bs := u64sToByteSlice(c.seeds)
+	bs := u32sToByteSlice(c.seeds)
 	n, err := writeAll(w, bs)
 	if err != nil {
 		return nw, err
@@ -56,6 +56,6 @@ func (c *Chd) UnmarshalBinaryMmap(buf []byte) error {
 		return fmt.Errorf("chd: no support to un-marshal version %d", hdr[0])
 	}
 
-	c.seeds = bsToUint64Slice(buf[_ChdHeaderSize:])
+	c.seeds = bsToUint32Slice(buf[_ChdHeaderSize:])
 	return nil
 }
