@@ -131,7 +131,7 @@ func (w *DBWriter) Len() int {
 // unequal length, only the smaller of the lengths are used. Records with duplicate
 // keys are discarded.
 // Returns number of records added.
-func (w *DBWriter) AddKeyVals(keys []uint64, vals [][]byte) (uint64, error) {
+func (w *DBWriter) AddKeyVals(keys []uint64, vals [][]byte) (int, error) {
 	if w.frozen {
 		return 0, ErrFrozen
 	}
@@ -141,7 +141,7 @@ func (w *DBWriter) AddKeyVals(keys []uint64, vals [][]byte) (uint64, error) {
 		n = len(vals)
 	}
 
-	var z uint64
+	var z int
 	for i := 0; i < n; i++ {
 		if ok, err := w.addRecord(keys[i], vals[i]); err != nil {
 			return z, err
@@ -159,10 +159,7 @@ func (w *DBWriter) Add(key uint64, val []byte) error {
 		return ErrFrozen
 	}
 
-	if _, err := w.addRecord(key, val); err != nil {
-		return err
-	}
-	return nil
+	return w.addRecord(key, val)
 }
 
 // Freeze builds the minimal perfect hash, writes the DB and closes it. The parameter
@@ -321,13 +318,13 @@ func (w *DBWriter) addRecord(key uint64, val []byte) (bool, error) {
 		return false, err
 	}
 
-	// Don't write values if we don't need to
 	v := &value{
 		off:  w.off,
 		vlen: uint32(len(val)),
 	}
 	w.keymap[key] = v
 
+	// Don't write values if we don't need to
 	if len(val) > 0 {
 		if err := w.writeRecord(val, v.off); err != nil {
 			return false, err

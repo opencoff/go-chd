@@ -16,16 +16,30 @@ import (
 	"unsafe"
 )
 
-// byte-slice to uint64 slice
-func bsToUint64Slice(b []byte) []uint64 {
-	n := len(b) / 8
+// byte-slice to uint16 slice
+func bsToUint16Slice(b []byte) []uint16 {
+	n := len(b) / 2
 	bh := (*reflect.SliceHeader)(unsafe.Pointer(&b))
-	var v []uint64
+	var v []uint16
 
 	sh := (*reflect.SliceHeader)(unsafe.Pointer(&v))
 	sh.Data = bh.Data
 	sh.Len = n
 	sh.Cap = n
+
+	return v
+}
+
+// uint32 slice to byte-slice
+func u16sToByteSlice(b []uint16) []byte {
+	n := len(b)
+	bh := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	var v []byte
+
+	sh := (*reflect.SliceHeader)(unsafe.Pointer(&v))
+	sh.Data = bh.Data
+	sh.Len = n * 2
+	sh.Cap = n * 2
 
 	return v
 }
@@ -54,6 +68,20 @@ func u32sToByteSlice(b []uint32) []byte {
 	sh.Data = bh.Data
 	sh.Len = n * 4
 	sh.Cap = n * 4
+
+	return v
+}
+
+// byte-slice to uint64 slice
+func bsToUint64Slice(b []byte) []uint64 {
+	n := len(b) / 8
+	bh := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	var v []uint64
+
+	sh := (*reflect.SliceHeader)(unsafe.Pointer(&v))
+	sh.Data = bh.Data
+	sh.Len = n
+	sh.Cap = n
 
 	return v
 }

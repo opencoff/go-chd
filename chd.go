@@ -19,12 +19,13 @@ package chd
 
 import (
 	"fmt"
+	"io"
 	"sort"
 )
 
 const (
 	// number of times we will try to build the table
-	_MaxSeed uint32 = 1000000
+	_MaxSeed uint32 = 65536 * 2
 )
 
 // ChdBuilder is used to create a MPHF from a given set of uint64 keys
@@ -107,6 +108,7 @@ func (c *ChdBuilder) Freeze(load float64) (*Chd, error) {
 	sort.Sort(buckets)
 
 	tries := 0
+	var maxseed uint32
 	for i := range buckets {
 		b := &buckets[i]
 		for s := uint32(1); s < _MaxSeed; s++ {
@@ -120,6 +122,9 @@ func (c *ChdBuilder) Freeze(load float64) (*Chd, error) {
 			}
 			occ.Merge(bOcc)
 			seeds[b.slot] = s
+			if s > maxseed {
+				maxseed = s
+			}
 			goto nextBucket
 
 		nextSeed:
@@ -131,21 +136,39 @@ func (c *ChdBuilder) Freeze(load float64) (*Chd, error) {
 	}
 
 	chd := &Chd{
-		seeds: seeds,
+		seed:  makeSeeds(seeds, maxseed),
 		tries: tries,
 	}
+
 	return chd, nil
+}
+
+func makeSeeds(s []uint32, max uint32) seeder {
+	switch {
+	case max < 256:
+		return newU8(s)
+
+	case max < 65536:
+		return newU16(s)
+
+	default:
+		return newU32(s)
+	}
 }
 
 // Chd represents a frozen PHF for the given set of keys
 type Chd struct {
-	seeds []uint32
+	seed  seeder
 	tries int
+}
+
+func (c *Chd) SeedSize() byte {
+	return c.seed.seedsize()
 }
 
 // Len returns the actual length of the PHF lookup table
 func (c *Chd) Len() int {
-	return len(c.seeds)
+	return c.seed.length()
 }
 
 // Find returns a unique integer representing the minimal hash for key 'k'.
@@ -153,9 +176,223 @@ func (c *Chd) Len() int {
 // at the time of construction of the minimal-hash).
 // Callers should verify that the key at the returned index == k.
 func (c *Chd) Find(k uint64) uint64 {
-	m := uint64(len(c.seeds))
+	m := uint64(c.seed.length())
 	h := rhash(0, k, m)
-	return rhash(c.seeds[h], k, m)
+	return rhash(c.seed.seed(h), k, m)
+}
+
+const _ChdHeaderSize = 8 // 1 x 64-bit words
+
+// To compress the seed table, we will use the interface below to abstract
+// seed table of different sizes: 1, 2, 4
+type seeder interface {
+	// given a hash index, return the seed at the index
+	seed(uint64) uint32
+
+	// marshal to writer 'w'
+	marshal(w io.Writer) (int, error)
+
+	// unmarshal from mem-mapped byte slice 'b'
+	unmarshal(b []byte) error
+
+	// size of each seed in bytes (1, 2, 4)
+	seedsize() byte
+
+	// # of seeds
+	length() int
+}
+
+// ensure each of these types implement the seeder interface above.
+var (
+	_ seeder = &u8Seeder{}
+	_ seeder = &u16Seeder{}
+	_ seeder = &u32Seeder{}
+)
+
+// 8 bit seed
+type u8Seeder struct {
+	seeds []uint8
+}
+
+func newU8(v []uint32) seeder {
+	bs := make([]byte, len(v))
+	for i, a := range v {
+		bs[i] = byte(a & 0xff)
+	}
+
+	s := &u8Seeder{
+		seeds: bs,
+	}
+	return s
+}
+
+func (u *u8Seeder) seed(v uint64) uint32 {
+	return uint32(u.seeds[v])
+}
+
+func (u *u8Seeder) length() int {
+	return len(u.seeds)
+}
+
+func (u *u8Seeder) seedsize() byte {
+	return 1
+}
+
+func (u *u8Seeder) marshal(w io.Writer) (int, error) {
+	return writeAll(w, u.seeds)
+}
+
+func (u *u8Seeder) unmarshal(b []byte) error {
+	u.seeds = b
+	return nil
+}
+
+// 16 bit seed
+type u16Seeder struct {
+	seeds []uint16
+}
+
+func newU16(v []uint32) seeder {
+	us := make([]uint16, len(v))
+	for i, a := range v {
+		us[i] = uint16(a & 0xffff)
+	}
+
+	s := &u16Seeder{
+		seeds: us,
+	}
+	return s
+}
+
+func (u *u16Seeder) seed(v uint64) uint32 {
+	return uint32(u.seeds[v])
+}
+
+func (u *u16Seeder) length() int {
+	return len(u.seeds)
+}
+func (u *u16Seeder) seedsize() byte {
+	return 2
+}
+
+func (u *u16Seeder) marshal(w io.Writer) (int, error) {
+	bs := u16sToByteSlice(u.seeds)
+	return writeAll(w, bs)
+}
+
+func (u *u16Seeder) unmarshal(b []byte) error {
+	u.seeds = bsToUint16Slice(b)
+	return nil
+}
+
+// 32 bit seed
+type u32Seeder struct {
+	seeds []uint32
+}
+
+func newU32(v []uint32) seeder {
+	s := &u32Seeder{
+		seeds: v,
+	}
+	return s
+}
+
+func (u *u32Seeder) seed(v uint64) uint32 {
+	return uint32(u.seeds[v])
+}
+
+func (u *u32Seeder) length() int {
+	return len(u.seeds)
+}
+
+func (u *u32Seeder) seedsize() byte {
+	return 4
+}
+
+func (u *u32Seeder) marshal(w io.Writer) (int, error) {
+	bs := u32sToByteSlice(u.seeds)
+	return writeAll(w, bs)
+}
+
+func (u *u32Seeder) unmarshal(b []byte) error {
+	u.seeds = bsToUint32Slice(b)
+	return nil
+}
+
+// MarshalBinary encodes the hash into a binary form suitable for durable storage.
+// A subsequent call to UnmarshalBinary() will reconstruct the CHD instance.
+func (c *Chd) MarshalBinary(w io.Writer) (int, error) {
+	// Header: 1 64-bit words:
+	//   o version byte
+	//   o CHD_Seed_Size byte
+	//   o resv [6]byte
+	//
+	// Body:
+	//   o <n> seeds laid out sequentially
+
+	var x [_ChdHeaderSize]byte // 4 x 64-bit words
+
+	x[0] = 1
+	x[1] = c.SeedSize()
+	nw, err := writeAll(w, x[:])
+	if err != nil {
+		return 0, err
+	}
+
+	m, err := c.seed.marshal(w)
+	return nw + m, err
+}
+
+// UnmarshalBinaryMmap reads a previously marshalled Chd instance and returns
+// a lookup table. It assumes that buf is memory-mapped and aligned at the
+// right boundaries.
+func (c *Chd) UnmarshalBinaryMmap(buf []byte) error {
+	hdr := buf[:_ChdHeaderSize]
+	if hdr[0] != 1 {
+		return fmt.Errorf("chd: no support to un-marshal version %d", hdr[0])
+	}
+
+	var seed seeder
+
+	size := hdr[1]
+	vals := buf[_ChdHeaderSize:]
+
+	switch size {
+	case 1:
+		u8 := &u8Seeder{}
+		if err := u8.unmarshal(vals); err != nil {
+			return nil
+		}
+		seed = u8
+	case 2:
+		if (len(vals) % 2) != 0 {
+			return fmt.Errorf("chd: partial seeds of size 2 (exp %d, saw %d)",
+				len(vals)+1, len(vals))
+		}
+
+		u16 := &u16Seeder{}
+		if err := u16.unmarshal(vals); err != nil {
+			return err
+		}
+		seed = u16
+
+	case 4:
+		if (len(vals) % 4) != 0 {
+			return fmt.Errorf("chd: partial seeds of size 2 (exp %d, saw %d)",
+				len(vals)+3/4, len(vals))
+		}
+		u32 := &u32Seeder{}
+		if err := u32.unmarshal(vals); err != nil {
+			return err
+		}
+		seed = u32
+
+	default:
+		return fmt.Errorf("chd: unknown seed-size %d", size)
+	}
+
+	c.seed = seed
+	return nil
 }
 
 // compression function for fasthash
