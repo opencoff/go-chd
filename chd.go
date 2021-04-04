@@ -18,6 +18,7 @@
 package chd
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
 	"sort"
@@ -31,6 +32,7 @@ const (
 // ChdBuilder is used to create a MPHF from a given set of uint64 keys
 type ChdBuilder struct {
 	data map[uint64]bool
+	salt uint64
 }
 
 // New enables creation of a minimal perfect hash function via the
@@ -44,6 +46,7 @@ type ChdBuilder struct {
 func New() (*ChdBuilder, error) {
 	c := &ChdBuilder{
 		data: make(map[uint64]bool),
+		salt: rand64(),
 	}
 
 	return c, nil
@@ -96,7 +99,7 @@ func (c *ChdBuilder) Freeze(load float64) (*Chd, error) {
 	}
 
 	for key, _ := range c.data {
-		j := rhash(0, key, m)
+		j := rhash(0, key, m, c.salt)
 		b := &buckets[j]
 		b.keys = append(b.keys, key)
 	}
@@ -114,7 +117,7 @@ func (c *ChdBuilder) Freeze(load float64) (*Chd, error) {
 		for s := uint32(1); s < _MaxSeed; s++ {
 			bOcc.Reset()
 			for _, key := range b.keys {
-				h := rhash(s, key, m)
+				h := rhash(s, key, m, c.salt)
 				if occ.IsSet(h) || bOcc.IsSet(h) {
 					goto nextSeed // try next seed
 				}
@@ -137,6 +140,7 @@ func (c *ChdBuilder) Freeze(load float64) (*Chd, error) {
 
 	chd := &Chd{
 		seed:  makeSeeds(seeds, maxseed),
+		salt:  c.salt,
 		tries: tries,
 	}
 
@@ -159,6 +163,7 @@ func makeSeeds(s []uint32, max uint32) seeder {
 // Chd represents a frozen PHF for the given set of keys
 type Chd struct {
 	seed  seeder
+	salt  uint64
 	tries int
 }
 
@@ -177,11 +182,12 @@ func (c *Chd) Len() int {
 // Callers should verify that the key at the returned index == k.
 func (c *Chd) Find(k uint64) uint64 {
 	m := uint64(c.seed.length())
-	h := rhash(0, k, m)
-	return rhash(c.seed.seed(h), k, m)
+	h := rhash(0, k, m, c.salt)
+	return rhash(c.seed.seed(h), k, m, c.salt)
 }
 
-const _ChdHeaderSize = 8 // 1 x 64-bit words
+// CHD Marshalled header - 2 x 64-bit words
+const _ChdHeaderSize = 16
 
 // To compress the seed table, we will use the interface below to abstract
 // seed table of different sizes: 1, 2, 4
@@ -322,10 +328,11 @@ func (u *u32Seeder) unmarshal(b []byte) error {
 // MarshalBinary encodes the hash into a binary form suitable for durable storage.
 // A subsequent call to UnmarshalBinary() will reconstruct the CHD instance.
 func (c *Chd) MarshalBinary(w io.Writer) (int, error) {
-	// Header: 1 64-bit words:
+	// Header: 2 64-bit words:
 	//   o version byte
 	//   o CHD_Seed_Size byte
 	//   o resv [6]byte
+	//   o salt 8 bytes
 	//
 	// Body:
 	//   o <n> seeds laid out sequentially
@@ -334,6 +341,7 @@ func (c *Chd) MarshalBinary(w io.Writer) (int, error) {
 
 	x[0] = 1
 	x[1] = c.SeedSize()
+	binary.LittleEndian.PutUint64(x[8:], c.salt)
 	nw, err := writeAll(w, x[:])
 	if err != nil {
 		return 0, err
@@ -341,6 +349,21 @@ func (c *Chd) MarshalBinary(w io.Writer) (int, error) {
 
 	m, err := c.seed.marshal(w)
 	return nw + m, err
+}
+
+// Dump CHD meta-data to io.Writer 'w'
+func (c *Chd) DumpMeta(w io.Writer) {
+	switch c.seed.(type) {
+	case *u8Seeder:
+		fmt.Fprintf(w, "  CHD with 8-bit seeds <salt %#x>\n", c.salt)
+	case *u16Seeder:
+		fmt.Fprintf(w, "  CHD with 16-bit seeds <salt %#x>\n", c.salt)
+	case *u32Seeder:
+		fmt.Fprintf(w, "  CHD with 32-bit seeds <salt %#x>\n", c.salt)
+
+	default:
+		panic("Unknown seed type!")
+	}
 }
 
 // UnmarshalBinaryMmap reads a previously marshalled Chd instance and returns
@@ -355,6 +378,7 @@ func (c *Chd) UnmarshalBinaryMmap(buf []byte) error {
 	var seed seeder
 
 	size := hdr[1]
+	salt := binary.LittleEndian.Uint64(hdr[8:])
 	vals := buf[_ChdHeaderSize:]
 
 	switch size {
@@ -392,6 +416,7 @@ func (c *Chd) UnmarshalBinaryMmap(buf []byte) error {
 	}
 
 	c.seed = seed
+	c.salt = salt
 	return nil
 }
 
@@ -407,10 +432,12 @@ func mix(h uint64) uint64 {
 // hash key with a given seed and return the result modulo 'sz'.
 // 'sz' is guarantted to be a power of 2; so, modulo can be fast.
 // borrowed from Zi Long Tan's superfast hash
-func rhash(seed uint32, key uint64, sz uint64) uint64 {
+func rhash(seed uint32, key, sz, salt uint64) uint64 {
 	const m uint64 = 0x880355f21e6d1965
 	var h uint64 = key
 
+	h *= m
+	h ^= mix(salt)
 	h *= m
 	h ^= mix(uint64(seed))
 	h *= m

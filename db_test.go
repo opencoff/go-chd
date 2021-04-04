@@ -57,16 +57,65 @@ func TestDB(t *testing.T) {
 	rd, err := NewDBReader(fn, 10)
 	assert(err == nil, "read failed: %s", err)
 
+	//rd.DumpMeta(os.Stdout)
 	for h, v := range kvmap {
 		s, err := rd.Find(h)
 		assert(err == nil, "can't find key %#x: %s", h, err)
 
-		assert(string(s) == v, "key %s: value mismatch; exp %s, saw %s", h, v, string(s))
+		assert(string(s) == v, "key %x: value mismatch; exp '%s', saw '%s'", h, v, string(s))
 	}
 
 	// now look for keys not in the DB
 	for i := 0; i < 10; i++ {
 		v, err := rd.Find(uint64(i))
 		assert(err != nil, "whoa: found key %d => %s", i, string(v))
+	}
+}
+
+func TestDBKeysOnly(t *testing.T) {
+	assert := newAsserter(t)
+
+	fn := fmt.Sprintf("%s/mph%d.db", os.TempDir(), rand.Int())
+
+	wr, err := NewDBWriter(fn)
+	assert(err == nil, "can't create db: %s", err)
+
+	defer func() {
+		if keep {
+			t.Logf("DB in %s retained after test\n", fn)
+		} else {
+			os.Remove(fn)
+		}
+	}()
+
+	hseed := rand64()
+	kvmap := make(map[uint64]string)
+	for _, s := range keyw {
+		h := fasthash.Hash64(hseed, []byte(s))
+		err = wr.Add(h, nil)
+		assert(err == nil, "can't add key %x: %s", h, err)
+		kvmap[h] = s
+	}
+
+	err = wr.Freeze(0.9)
+	assert(err == nil, "freeze failed: %s", err)
+
+	rd, err := NewDBReader(fn, 10)
+	assert(err == nil, "read failed: %s", err)
+
+	//rd.DumpMeta(os.Stdout)
+
+	for h := range kvmap {
+		s, err := rd.Find(h)
+		assert(err == nil, "can't find key %#x: %s", h, err)
+
+		assert(s == nil, "key %x: value mismatch; exp nil, saw '%s'", h, string(s))
+	}
+
+	// now look for keys not in the DB
+	for i := 0; i < 10; i++ {
+		j := rand64()
+		v, err := rd.Find(j)
+		assert(err != nil, "whoa: found key %d => %s", j, string(v))
 	}
 }

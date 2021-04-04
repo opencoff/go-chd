@@ -43,7 +43,7 @@ import (
 //   - 64 byte file header: big-endian encoding of all multibyte ints
 //      * magic    [4]byte "CHDB"
 //      * flags    uint32  for now, all zeros
-//      * salt     [8]byte random salt for siphash record integrity
+//      * salt     [16]byte random salt for siphash record integrity
 //      * nkeys    uint64  Number of keys in the DB
 //      * offtbl   uint64  File offset of <offset, hash> table
 //
@@ -75,10 +75,17 @@ type DBWriter struct {
 	// records
 	off uint64
 
+	valSize uint64
+
 	fntmp  string // tmp file name
 	fn     string // final file holding the PHF
 	frozen bool
 }
+
+const (
+	// Flags
+	_DB_KeysOnly = 1 << iota
+)
 
 // things associated with each key/value pair
 type value struct {
@@ -159,7 +166,10 @@ func (w *DBWriter) Add(key uint64, val []byte) error {
 		return ErrFrozen
 	}
 
-	return w.addRecord(key, val)
+	if _, err := w.addRecord(key, val); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Freeze builds the minimal perfect hash, writes the DB and closes it. The parameter
@@ -208,11 +218,19 @@ func (w *DBWriter) Freeze(load float64) (err error) {
 	var ehdr [64]byte
 
 	// header is encoded in big-endian format
+	// 4 byte magic
+	// 4 byte flags
+	// 8 byte salt
+	// 8 byte nkeys
+	// 8 byte offtbl
 	be := binary.BigEndian
 	copy(ehdr[:4], []byte{'C', 'H', 'D', 'B'})
 
-	// 8 = 4 bytes magic + skip 4 bytes of flags (zero for now)
-	i := 8
+	i := 4
+	if w.valSize == 0 {
+		be.PutUint32(ehdr[i:i+4], uint32(_DB_KeysOnly))
+	}
+	i += 4
 
 	i += copy(ehdr[i:], w.salt)
 	be.PutUint64(ehdr[i:i+8], uint64(chd.Len()))
@@ -272,6 +290,10 @@ func (w *DBWriter) Abort() {
 
 // write the offset mapping table and value-len table
 func (w *DBWriter) marshalOffsets(tee io.Writer, c *Chd) error {
+	if w.valSize == 0 {
+		return w.marshalKeys(tee, c)
+	}
+
 	n := uint64(c.Len())
 	offset := make([]uint64, 2*n)
 	vlen := make([]uint32, n)
@@ -283,8 +305,8 @@ func (w *DBWriter) marshalOffsets(tee io.Writer, c *Chd) error {
 
 		// each entry is 2 64-bit words
 		j := i * 2
-		offset[j] = r.off
-		offset[j+1] = k
+		offset[j] = k
+		offset[j+1] = r.off
 	}
 
 	bs := u64sToByteSlice(offset)
@@ -299,6 +321,23 @@ func (w *DBWriter) marshalOffsets(tee io.Writer, c *Chd) error {
 	}
 
 	w.off += uint64(n * (8 + 8 + 4))
+	return nil
+}
+
+// write just the keys - since we don't have values
+func (w *DBWriter) marshalKeys(tee io.Writer, c *Chd) error {
+	n := uint64(c.Len())
+	offset := make([]uint64, n)
+	for k := range w.keymap {
+		i := c.Find(k)
+		offset[i] = k
+	}
+
+	bs := u64sToByteSlice(offset)
+	if _, err := writeAll(tee, bs); err != nil {
+		return err
+	}
+	w.off += uint64(n * 8)
 	return nil
 }
 
@@ -329,6 +368,8 @@ func (w *DBWriter) addRecord(key uint64, val []byte) (bool, error) {
 		if err := w.writeRecord(val, v.off); err != nil {
 			return false, err
 		}
+
+		w.valSize += uint64(len(val))
 	}
 
 	return true, nil

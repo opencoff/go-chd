@@ -38,11 +38,13 @@ type value struct {
 func main() {
 	var load float64
 	var verify bool
+	var dump bool
 
 	usage := fmt.Sprintf("%s [options] OUTPUT [INPUT ...]", os.Args[0])
 
 	flag.Float64VarP(&load, "load", "l", 0.85, "Use `L` as the hash table load factor")
 	flag.BoolVarP(&verify, "verify", "V", false, "Verify a constant DB")
+	flag.BoolVarP(&dump, "dump-meta", "d", false, "Dump db meta-data")
 	flag.Usage = func() {
 		fmt.Printf("mphdb - create MPH DB from txt or CSV files using CHD\nUsage: %s\n", usage)
 		flag.PrintDefaults()
@@ -58,13 +60,18 @@ func main() {
 	fn := args[0]
 	args = args[1:]
 
-	if verify {
+	if verify || dump {
 		db, err := chd.NewDBReader(fn, 1000)
 		if err != nil {
 			die("Can't read %s: %s", fn, err)
 		}
 
-		fmt.Printf("%s: %d records\n", fn, db.Len())
+		if verify {
+			fmt.Printf("%s: %d records\n", fn, db.Len())
+		} else {
+			db.DumpMeta(os.Stdout)
+		}
+
 		db.Close()
 		return
 	}

@@ -32,14 +32,17 @@ type DBReader struct {
 
 	cache *lru.ARCCache
 
+	flags uint32
+
 	// memory mapped offset+hashkey table
 	offset []uint64
 
 	// memory mapped vlen table
 	vlen []uint32
 
-	nkeys uint64
-	salt  []byte
+	nkeys  uint64
+	salt   []byte
+	offtbl uint64
 
 	// original mmap slice
 	mmap []byte
@@ -100,10 +103,13 @@ func NewDBReader(fn string, cache int) (rd *DBReader, err error) {
 	// sanity check - even though we have verified the strong checksum
 	// 8 + 8 + 4: offset, hashkey, vlen
 	tblsz := rd.nkeys * (8 + 8 + 4)
+	if (rd.flags & _DB_KeysOnly) > 0 {
+		tblsz = rd.nkeys * 8
+	}
 
 	// 64 + 32: 64 bytes of header, 32 bytes of sha trailer
 	if uint64(st.Size()) < (64 + 32 + tblsz) {
-		return nil, fmt.Errorf("%s: corrupt header", fn)
+		return nil, fmt.Errorf("%s: corrupt header1", fn)
 	}
 
 	rd.cache, err = lru.NewARC(cache)
@@ -122,12 +128,19 @@ func NewDBReader(fn string, cache int) (rd *DBReader, err error) {
 			fn, mmapsz, offtbl, err)
 	}
 
+	// if this DB has only keys, then the offtbl is just u64 hash keys
 	offsz := rd.nkeys * (8 + 8)
 	vlensz := rd.nkeys * 4
+	if (rd.flags & _DB_KeysOnly) > 0 {
+		offsz = rd.nkeys * 8
+		vlensz = 0
+	}
 
 	rd.mmap = bs
 	rd.offset = bsToUint64Slice(bs[:offsz])
-	rd.vlen = bsToUint32Slice(bs[offsz : offsz+vlensz])
+	if vlensz > 0 {
+		rd.vlen = bsToUint32Slice(bs[offsz : offsz+vlensz])
+	}
 
 	// The CHD table starts here
 	if err := rd.chd.UnmarshalBinaryMmap(bs[offsz+vlensz:]); err != nil {
@@ -164,6 +177,30 @@ func (rd *DBReader) Lookup(key uint64) ([]byte, bool) {
 	return v, true
 }
 
+// Dump the metadata to io.Writer 'w'
+func (rd *DBReader) DumpMeta(w io.Writer) {
+	if (rd.flags & _DB_KeysOnly) > 0 {
+		fmt.Fprintf(w, "CHDB: <KEYS> %d keys, hash-salt %#x, offtbl at %#x\n",
+			rd.nkeys, rd.salt, rd.offtbl)
+
+		rd.chd.DumpMeta(w)
+		for i := uint64(0); i < rd.nkeys; i++ {
+			fmt.Fprintf(w, "  %3d: %x\n", i, rd.offset[i])
+		}
+	} else {
+		fmt.Fprintf(w, "CHDB: <KEYS+VALS> %d keys, hash-salt %#x, offtbl at %#x\n",
+			rd.nkeys, rd.salt, rd.offtbl)
+
+		rd.chd.DumpMeta(w)
+		for i := uint64(0); i < rd.nkeys; i++ {
+			j := i * 2
+			h := rd.offset[j]
+			o := rd.offset[j+1]
+			fmt.Fprintf(w, "  %3d: %#x, %d bytes at %#x\n", i, h, rd.vlen[i], o)
+		}
+	}
+}
+
 // Find looks up 'key' in the table and returns the corresponding value.
 // It returns an error if the key is not found or the disk i/o failed or
 // the record checksum failed.
@@ -175,16 +212,29 @@ func (rd *DBReader) Find(key uint64) ([]byte, error) {
 	// Not in cache. So, go to disk and find it.
 	// We are guaranteed that: 0 <= i < rd.nkeys
 	i := rd.chd.Find(key)
+	if (rd.flags & _DB_KeysOnly) > 0 {
+		// offtbl is just the keys; no values.
+		if hash := toLittleEndianUint64(rd.offset[i]); hash != key {
+			return nil, ErrNoKey
+		}
+
+		rd.cache.Add(key, nil)
+		return nil, nil
+	}
+
+	// we have keys _and_ values
+
 	j := i * 2
-	if hash := toLittleEndianUint64(rd.offset[j+1]); hash != key {
+	if hash := toLittleEndianUint64(rd.offset[j]); hash != key {
 		return nil, ErrNoKey
 	}
 
-	vlen := toLittleEndianUint32(rd.vlen[i])
-	off := toLittleEndianUint64(rd.offset[j])
+	var val []byte
+	var err error
 
-	val, err := rd.decodeRecord(off, vlen)
-	if err != nil {
+	vlen := toLittleEndianUint32(rd.vlen[i])
+	off := toLittleEndianUint64(rd.offset[j+1])
+	if val, err = rd.decodeRecord(off, vlen); err != nil {
 		return nil, err
 	}
 
@@ -271,17 +321,20 @@ func (rd *DBReader) decodeHeader(b []byte, sz int64) (uint64, error) {
 	}
 
 	be := binary.BigEndian
-	i := 8 // skip the magic and flags
+	i := 4
+
+	rd.flags = be.Uint32(b[i : i+4])
+	i += 4
 
 	rd.salt = b[i : i+16]
 	i += 16
 	rd.nkeys = be.Uint64(b[i : i+8])
 	i += 8
-	offtbl := be.Uint64(b[i : i+8])
+	rd.offtbl = be.Uint64(b[i : i+8])
 
-	if offtbl < 64 || offtbl >= uint64(sz-32) {
-		return 0, fmt.Errorf("%s: corrupt header", rd.fn)
+	if rd.offtbl < 64 || rd.offtbl >= uint64(sz-32) {
+		return 0, fmt.Errorf("%s: corrupt header0", rd.fn)
 	}
 
-	return offtbl, nil
+	return rd.offtbl, nil
 }

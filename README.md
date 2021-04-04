@@ -39,6 +39,11 @@ Thus, if users of `Chd` are unsure of the input being passed to such a
 the actual key to verify. Look at `dbreader.go:Find()` for an
 example.
 
+`DBWriter` optimizes the database if there are no values present -
+i.e., keys-only. This optimization significantly reduces the
+file-size.
+
+
 ## How do I use it?
 Like any other golang library: `go get github.com/opencoff/go-chd`.
 
